@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Färgkokeriet — blanda färger med Enzo</title>
+<meta name="description" content="Blanda röd, gul och blå till nya färger tillsammans med Enzo. Måla sedan på papperet med färgerna du gjort.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Färgkokeriet">
+<meta name="theme-color" content="#fdf3e7">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#fdf3e7;
+    font-family:"Trebuchet MS", Verdana, sans-serif; -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent; touch-action:none; }
+  #wrap { position:fixed; inset:0; }
+  canvas { display:block; touch-action:none; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<script>
+// Färgkokeriet — blanda och måla
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W = 1000, H = 700, DPR = 1;
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  layout();
+}
+addEventListener('resize', resize);
+
+// färger
+const BOTTLES = [
+  { id:'röd', col:'#e2544a', text:'Röd' },
+  { id:'gul', col:'#f7c948', text:'Gul' },
+  { id:'blå', col:'#4f8ed6', text:'Blå' },
+  { id:'vit', col:'#ffffff', dark:44 },
+  { id:'svart', col:'#3b3b44' },
+];
+const NAMES = {
+  '#e2544a':'röd', '#f7c948':'gul', '#4f8ed6':'blå', '#ffffff':'vit', '#3b3b44':'svart',
+  '#f2913d':'orange', '#8fbf5a':'grön', '#9b6bc9':'lila', '#f4a3b8':'rosa',
+  '#b9b0a6':'grå', '#e9a6c4':'ljusrosa', '#8fb5a8':'havsgrön', '#c99a5b':'brun'
+};
+
+// blandningstabell
+function mixColors(a, b) {
+  const key = [a, b].sort().join('+');
+  const t = {
+    'gul+röd':'#f2913d', 'blå+röd':'#9b6bc9', 'blå+gul':'#8fbf5a',
+    'röd+vit':'#f4a3b8', 'gul+vit':'#fdf0be', 'blå+vit':'#bcd6f0',
+    'röd+svart':'#8f3a34', 'gul+svart':'#8f7a2a', 'blå+svart':'#2f4f7a',
+    'vit+svart':'#b9b0a6',
+  };
+  if (t[key]) return t[key];
+  if (key === 'röd+röd') return '#e2544a';
+  if (key === 'gul+gul') return '#f7c948';
+  if (key === 'blå+blå') return '#4f8ed6';
+  if (key === 'svart+svart') return '#2a2a31';
+  if (key === 'vit+vit') return '#ffffff';
+  return null;
+}
+function nameOf(hex) { return NAMES[hex] || 'ny färg'; }
+
+const state = {
+  pick: 0, bowl: [], color: '#e2544a', bubbles: [], sparks: [], t: 0,
+  paper: [], msg: '', msgT: 0, lastMix: 0,
+};
+
+// --- ljud
+let actx = null;
+function audio() { if (!actx) { try { actx = new (AudioContext || webkitAudioContext)(); } catch(e){} } return actx; }
+function tone(f, dur, vol, type, slide) {
+  const a = audio(); if (!a) return;
+  const o = a.createOscillator(), g = a.createGain();
+  o.type = type || 'sine'; o.frequency.value = f;
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(50, slide), a.currentTime + dur);
+  g.gain.value = vol || 0.05;
+  g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+  o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + dur);
+}
+
+// --- svenska rösten
+function speak(txt) {
+  try {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(txt);
+    u.lang = 'sv-SE'; u.rate = 0.95; u.pitch = 1.08;
+    const v = (speechSynthesis.getVoices() || []).filter(function (x) { return (x.lang || '').indexOf('sv') === 0; })[0];
+    if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+// --- geometri
+let L = { paper:{x:0,y:0,w:0,h:0}, bowl:{x:0,y:0,r:0}, bottles:[], clear:{}, empty:{}, enzo:{} };
+function layout() {
+  const padX = Math.max(18, W * 0.03);
+  const r = Math.min(78, Math.max(46, Math.min(W, H) * 0.085));
+  // skålen har egen plats till höger om papperet – inget målas under den
+  const bowlSpace = r * 2 + Math.max(14, padX * 0.6);
+  L.paper = { x: padX, y: 96, w: W - padX * 2 - bowlSpace, h: H - 96 - Math.min(190, H * 0.27) };
+  L.bowl = { x: W - padX - r, y: 96 + r + 6, r: r };
+  const n = BOTTLES.length;
+  const bw = Math.min(116, (W - padX * 2 - 280) / n);
+  const y = H - Math.min(190, H * 0.27) / 2 - 6;
+  L.bottles = [];
+  for (let i = 0; i < n; i++) {
+    L.bottles.push({ i: i, x: padX + 26 + bw * (i + 0.5), y: y, w: bw * 0.78, h: bw * 0.92 });
+  }
+  L.clear = { x: W - padX - 108, y: H - 46, w: 108, h: 40 };
+  L.empty = { x: W - padX - 232, y: H - 46, w: 108, h: 40 };
+  L.enzo = { x: L.paper.x + 78, y: L.paper.y + L.paper.h - 58, s: 0.42 };
+}
+
+// --- rita
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function heart(x, y, s, col) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.beginPath();
+  ctx.moveTo(0, 7);
+  ctx.bezierCurveTo(-16, -4, -8, -15, 0, -6);
+  ctx.bezierCurveTo(8, -15, 16, -4, 0, 7);
+  ctx.fillStyle = col || '#f2a0b4'; ctx.fill(); ctx.restore();
+}
+
+function drawEnzo(x, y, s) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const bob = Math.sin(state.t * 2) * 3;
+  ctx.fillStyle = 'rgba(0,0,0,.12)';
+  ctx.beginPath(); ctx.ellipse(0, 96 + bob, 60, 14, 0, 0, 6.3); ctx.fill();
+  ctx.save(); ctx.translate(0, bob);
+  ctx.fillStyle = '#7bcbb6';
+  ctx.beginPath(); ctx.ellipse(0, 0, 74, 78, 0, 0, 6.3); ctx.fill();
+  ctx.fillStyle = '#fff6ec';
+  ctx.beginPath();
+  ctx.moveTo(-38, 22); ctx.lineTo(38, 22); ctx.lineTo(46, 80); ctx.lineTo(-46, 80); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#f3e1cf';
+  ctx.beginPath(); ctx.arc(0, -16, 46, 0, 6.3); ctx.fill();
+  // mössa
+  ctx.fillStyle = '#ef8064';
+  ctx.beginPath(); ctx.arc(0, -50, 48, Math.PI, 0); ctx.fill();
+  ctx.fillRect(-50, -52, 100, 10);
+  // ögon
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-16, -18, 12, 0, 6.3); ctx.arc(16, -18, 12, 0, 6.3); ctx.fill();
+  ctx.fillStyle = '#4a3f39'; ctx.beginPath(); ctx.arc(-14, -18, 6, 0, 6.3); ctx.arc(18, -18, 6, 0, 6.3); ctx.fill();
+  ctx.fillStyle = 'rgba(242,160,180,.6)';
+  ctx.beginPath(); ctx.arc(-30, 2, 9, 0, 6.3); ctx.arc(30, 2, 9, 0, 6.3); ctx.fill();
+  ctx.strokeStyle = '#4a3f39'; ctx.lineWidth = 3; ctx.beginPath();
+  ctx.arc(0, 8, 14, 0.15, Math.PI - 0.15); ctx.stroke();
+  // pensel
+  ctx.save(); ctx.translate(60, 30); ctx.rotate(-0.5);
+  ctx.fillStyle = '#c98a5a'; ctx.fillRect(-4, -46, 8, 54);
+  ctx.fillStyle = '#c9d4d8'; ctx.fillRect(-7, -52, 14, 10);
+  ctx.fillStyle = state.color; ctx.beginPath(); ctx.arc(0, 6, 9, 0, 6.3); ctx.fill();
+  ctx.restore();
+  ctx.restore(); ctx.restore();
+}
+
+function drawBottles() {
+  for (const b of L.bottles) {
+    const cfg = BOTTLES[b.i];
+    const sel = state.pick === b.i;
+    const lift = sel ? -14 : 0;
+    ctx.save(); ctx.translate(b.x, b.y + lift);
+    ctx.fillStyle = 'rgba(0,0,0,.14)';
+    ctx.beginPath(); ctx.ellipse(0, b.h * 0.52, b.w * 0.44, 9, 0, 0, 6.3); ctx.fill();
+    // flaska
+    ctx.fillStyle = 'rgba(255,255,255,.86)';
+    roundRect(-b.w / 2, -b.h / 2, b.w, b.h, 14); ctx.fill();
+    ctx.fillStyle = cfg.col;
+    roundRect(-b.w / 2 + 6, -b.h / 2 + 22, b.w - 12, b.h - 30, 9); ctx.fill();
+    if (cfg.dark) { ctx.strokeStyle = 'rgba(0,0,0,.13)'; ctx.lineWidth = 2; roundRect(-b.w / 2 + 6, -b.h / 2 + 22, b.w - 12, b.h - 30, 9); ctx.stroke(); }
+    // kork
+    ctx.fillStyle = '#c98a5a';
+    roundRect(-b.w * 0.22, -b.h / 2 - 12, b.w * 0.44, 16, 6); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    roundRect(-b.w / 2 + 11, -b.h / 2 + 8, b.w * 0.18, b.h * 0.34, 6); ctx.fill();
+    if (sel) {
+      ctx.strokeStyle = '#4a3f39'; ctx.lineWidth = 4;
+      roundRect(-b.w / 2 - 4, -b.h / 2 - 4, b.w + 8, b.h + (cfg.dark ? 8 : 8), 16); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawBowl() {
+  const b = L.bowl;
+  ctx.save(); ctx.translate(b.x, b.y);
+  ctx.fillStyle = 'rgba(0,0,0,.12)';
+  ctx.beginPath(); ctx.ellipse(0, 8, b.r * 1.02, b.r * 0.42, 0, 0, 6.3); ctx.fill();
+  ctx.fillStyle = '#fffaf3';
+  ctx.beginPath(); ctx.arc(0, -4, b.r, 0, Math.PI); ctx.fill();
+  ctx.fillStyle = '#f1e0cf';
+  ctx.beginPath(); ctx.arc(0, -4, b.r * 0.88, 0, Math.PI); ctx.fill();
+  // innehåll
+  const n = state.bowl.length;
+  if (n) {
+    const col = n === 1 ? state.bowl[0].col : (mixColors(state.bowl[0].id, state.bowl[1].id) || '#b9b0a6');
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(0, -4, b.r * 0.86, 0.15, Math.PI - 0.15); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, -4, b.r * 0.86, b.r * 0.2, 0, 0, 6.3); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.35)';
+    ctx.beginPath(); ctx.ellipse(-b.r * 0.3, -b.r * 0.3, b.r * 0.28, b.r * 0.12, -0.5, 0, 6.3); ctx.fill();
+  }
+  ctx.strokeStyle = '#e3cdb6'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.arc(0, -4, b.r, 0, Math.PI); ctx.stroke();
+  // droppe ovanför
+  if (n === 1) {
+    ctx.fillStyle = state.bowl[0].col;
+    ctx.beginPath(); ctx.arc(0, -b.r - 26, 12, 0, 6.3); ctx.fill();
+  }
+  ctx.restore();
+
+  // text
+  ctx.fillStyle = '#a08e80'; ctx.font = 'bold 13px "Trebuchet MS", sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(n >= 2 ? 'BLANDAT!' : 'BLANDA HÄR', b.x, b.y + b.r + 30);
+}
+
+function drawPaper(t) {
+  const p = L.paper;
+  ctx.fillStyle = 'rgba(0,0,0,.10)'; roundRect(p.x + 6, p.y + 8, p.w, p.h, 22); ctx.fill();
+  ctx.fillStyle = '#ffffff'; roundRect(p.x, p.y, p.w, p.h, 22); ctx.fill();
+  ctx.save(); roundRect(p.x, p.y, p.w, p.h, 22); ctx.clip();
+  // suddig bakgrund
+  ctx.fillStyle = '#fffdf8'; ctx.fillRect(p.x, p.y, p.w, p.h);
+  for (const d of state.paper) {
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = d.col;
+    ctx.beginPath();
+    for (let k = 0; k < 7; k++) {
+      const a = k / 7 * 6.283;
+      const rr = d.r * (0.86 + 0.2 * Math.sin(k * 2.1 + d.seed));
+      const x = d.x + Math.cos(a) * rr, y = d.y + Math.sin(a) * rr;
+      if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if (!state.paper.length) {
+    ctx.fillStyle = '#e8ded1'; ctx.font = 'bold 20px "Trebuchet MS", sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Tryck här för att måla', p.x + p.w / 2, p.y + p.h / 2);
+  }
+  ctx.restore();
+}
+
+function drawTop() {
+  // färgprov
+  ctx.fillStyle = 'rgba(255,250,243,.94)'; roundRect(20, 18, 232, 62, 20); ctx.fill();
+  ctx.fillStyle = state.color;
+  ctx.beginPath(); ctx.arc(56, 49, 20, 0, 6.3); ctx.fill();
+  ctx.strokeStyle = '#e3cdb6'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(56, 49, 20, 0, 6.3); ctx.stroke();
+  ctx.fillStyle = '#4a3f39'; ctx.font = 'bold 15px "Trebuchet MS", sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('DIN FÄRG', 88, 42);
+  ctx.fillStyle = '#a08e80'; ctx.font = 'bold 17px "Trebuchet MS", sans-serif';
+  ctx.fillText(nameOf(state.color), 88, 63);
+
+  // knappar
+  drawBtn(L.empty, 'NY FÄRG', '#8fd8c6', '#1f6b58');
+  drawBtn(L.clear, 'TÖM', '#f2a0b4', '#7a3f50');
+}
+function drawBtn(r, txt, bg, fg) {
+  ctx.fillStyle = 'rgba(0,0,0,.12)'; roundRect(r.x + 3, r.y + 4, r.w, r.h, 18); ctx.fill();
+  ctx.fillStyle = bg; roundRect(r.x, r.y, r.w, r.h, 18); ctx.fill();
+  ctx.fillStyle = fg; ctx.font = 'bold 13px "Trebuchet MS", sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(txt, r.x + r.w / 2, r.y + r.h / 2 + 5);
+}
+
+function drawSparks() {
+  for (const s of state.sparks) {
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.fillStyle = s.col;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.3); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawMsg() {
+  if (state.msgT <= 0) return;
+  const a = Math.min(1, state.msgT / 300);
+  ctx.globalAlpha = a;
+  const w = Math.min(430, ctx.measureText(state.msg).width + 80);
+  ctx.fillStyle = 'rgba(74,63,57,.9)';
+  roundRect(W / 2 - w / 2, H * 0.2, w, 56, 28); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 21px "Trebuchet MS", sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(state.msg, W / 2, H * 0.2 + 36);
+  ctx.globalAlpha = 1;
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - (loop.last || now)) / 1000);
+  loop.last = now;
+  state.t += dt;
+  ctx.clearRect(0, 0, W, H);
+  // bakgrund
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#fdf3e7'); g.addColorStop(1, '#f6e2cb');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // kakel
+  ctx.fillStyle = 'rgba(255,255,255,.35)';
+  for (let x = 0; x < W; x += 88) for (let y = 0; y < H; y += 88) {
+    ctx.fillRect(x + 4, y + 4, 80, 80);
+  }
+
+  drawPaper(state.t);
+  drawBowl();
+  drawEnzo(L.enzo.x, L.enzo.y, L.enzo.s);
+  drawBottles();
+  drawTop();
+  drawSparks();
+  drawMsg();
+
+  if (state.msgT > 0) state.msgT -= dt * 1000;
+  state.sparks = state.sparks.filter(function (s) {
+    s.y -= 30 * dt; s.life -= dt * 0.9; s.r += 10 * dt; return s.life > 0;
+  });
+  requestAnimationFrame(loop);
+}
+
+// --- inmatning
+function hit(r, x, y) { return x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h; }
+
+cv.addEventListener('pointerdown', function (e) {
+  e.preventDefault(); audio();
+  const x = e.clientX, y = e.clientY;
+
+  if (hit(L.clear, x, y)) { state.paper = []; tone(300, 0.1, 0.04, 'sine', 200); setMsg('Papperet är tomt igen'); return; }
+  if (hit(L.empty, x, y)) {
+    state.bowl = []; tone(260, 0.1, 0.04, 'sine', 180);
+    setMsg('Ny färg!'); return;
+  }
+
+  // flaskor
+  for (const b of L.bottles) {
+    if (Math.abs(x - b.x) < b.w * 0.62 && Math.abs(y - b.y) < b.h * 0.72) {
+      state.pick = b.i;
+      tone(520 + b.i * 70, 0.08, 0.04, 'triangle', 700 + b.i * 70);
+      return;
+    }
+  }
+
+  // skålen: häll i vald färg
+  const dx = x - L.bowl.x, dy = y - (L.bowl.y - L.bowl.r * 0.2);
+  if (Math.sqrt(dx * dx + dy * dy) < L.bowl.r * 1.15) {
+    addToBowl(BOTTLES[state.pick]);
+    return;
+  }
+
+  // papperet: måla
+  if (hit(L.paper, x, y)) {
+    painting = true; lastPaint = { x: x, y: y };
+    state.paper.push({ x: x, y: y, r: Math.min(64, 34 + Math.random() * 16), col: state.color, seed: Math.random() * 6.28 });
+    tone(700, 0.06, 0.03, 'sine', 900);
+    for (let i = 0; i < 3; i++) {
+      state.sparks.push({ x: x + (Math.random() - 0.5) * 40, y: y + (Math.random() - 0.5) * 40, r: 3 + Math.random() * 4, col: state.color, life: 1 });
+    }
+  }
+});
+
+let painting = false, lastPaint = null;
+cv.addEventListener('pointermove', function (e) {
+  if (!painting) return;
+  const x = e.clientX, y = e.clientY;
+  if (!hit(L.paper, x, y)) return;
+  const d = lastPaint ? Math.hypot(x - lastPaint.x, y - lastPaint.y) : 0;
+  if (d < 14) return;
+  lastPaint = { x: x, y: y };
+  state.paper.push({ x: x, y: y, r: 18 + Math.random() * 6, col: state.color, seed: Math.random() * 6.28 });
+});
+addEventListener('pointerup', function () { painting = false; });
+addEventListener('pointercancel', function () { painting = false; });
+
+function addToBowl(bottle) {
+  if (state.bowl.length >= 2) {
+    state.bowl = [];
+  }
+  state.bowl.push({ id: bottle.id, col: bottle.col });
+  tone(420, 0.1, 0.04, 'sine', 300);
+  if (state.bowl.length === 2) {
+    const res = mixColors(state.bowl[0].id, state.bowl[1].id);
+    if (res) {
+      state.color = res;
+      const nm = nameOf(res);
+      setMsg(nm.toUpperCase() + '!');
+      speak(nm);
+      tone(880, 0.14, 0.05, 'triangle', 1320);
+      setTimeout(function () { tone(1180, 0.16, 0.04, 'sine'); }, 90);
+      for (let i = 0; i < 12; i++) {
+        state.sparks.push({ x: L.bowl.x + (Math.random() - 0.5) * 120, y: L.bowl.y - (Math.random() * 60), r: 4 + Math.random() * 5, col: res, life: 1 });
+      }
+    }
+  } else {
+    setMsg('Häll i en färg till!');
+  }
+}
+function setMsg(m) { state.msg = m; state.msgT = 2200; }
+
+resize();
+requestAnimationFrame(loop);
+
+window.__fk = {
+  mix: function (a, b) { return mixColors(a, b); },
+  pour: function (i) { addToBowl(BOTTLES[i]); },
+  state: function () { return { bowl: state.bowl.slice(), color: state.color, paper: state.paper.length }; },
+  setPick: function (i) { state.pick = i; },
+};
+</script>
+</body>
+</html>
