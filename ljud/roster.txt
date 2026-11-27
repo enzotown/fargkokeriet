@@ -1,0 +1,15 @@
+# Färgkokeriet – Kotten säger vad färgen blev (hela meningar, omni-rösten)
+Det blev rött!
+Det blev gult!
+Det blev blått!
+Det blev vitt!
+Det blev svart!
+Det blev orange!
+Det blev grönt!
+Det blev lila!
+Det blev rosa!
+Det blev grått!
+Det blev ljusrosa!
+Det blev havsgrönt!
+Det blev brunt!
+Det blev en ny färg!
