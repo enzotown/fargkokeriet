@@ -272,15 +272,17 @@ function drawPaper(t) {
 }
 
 function drawTop() {
+  // Skolappars Kotten-knapp: 56 px stor, 12 px från övre vänstra hörnet — håll rutan fri
+  const KX = 76;
   // färgprov
-  ctx.fillStyle = 'rgba(255,250,243,.94)'; roundRect(20, 18, 232, 62, 20); ctx.fill();
+  ctx.fillStyle = 'rgba(255,250,243,.94)'; roundRect(KX, 18, 232, 62, 20); ctx.fill();
   ctx.fillStyle = state.color;
-  ctx.beginPath(); ctx.arc(56, 49, 20, 0, 6.3); ctx.fill();
-  ctx.strokeStyle = '#e3cdb6'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(56, 49, 20, 0, 6.3); ctx.stroke();
+  ctx.beginPath(); ctx.arc(KX + 36, 49, 20, 0, 6.3); ctx.fill();
+  ctx.strokeStyle = '#e3cdb6'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(KX + 36, 49, 20, 0, 6.3); ctx.stroke();
   ctx.fillStyle = '#4a3f39'; ctx.font = 'bold 15px "Trebuchet MS", sans-serif'; ctx.textAlign = 'left';
-  ctx.fillText('DIN FÄRG', 88, 42);
+  ctx.fillText('DIN FÄRG', KX + 68, 42);
   ctx.fillStyle = '#a08e80'; ctx.font = 'bold 17px "Trebuchet MS", sans-serif';
-  ctx.fillText(nameOf(state.color), 88, 63);
+  ctx.fillText(nameOf(state.color), KX + 68, 63);
 
   // knappar
   drawBtn(L.empty, 'NY FÄRG', '#8fd8c6', '#1f6b58');
